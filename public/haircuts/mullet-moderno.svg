@@ -1,0 +1,19 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='900' viewBox='0 0 1200 900'>
+  <defs>
+    <linearGradient id='bg' x1='0' y1='0' x2='1' y2='1'>
+      <stop offset='0%' stop-color='#22181f' />
+      <stop offset='100%' stop-color='#7f5970' />
+    </linearGradient>
+    <linearGradient id='accent' x1='0' y1='0' x2='1' y2='0'>
+      <stop offset='0%' stop-color='#c79a4e' />
+      <stop offset='100%' stop-color='#e4c083' />
+    </linearGradient>
+  </defs>
+  <rect width='1200' height='900' fill='url(#bg)' />
+  <rect x='72' y='72' width='1056' height='756' rx='38' fill='none' stroke='rgba(243,238,231,0.22)' stroke-width='2' />
+  <circle cx='1020' cy='190' r='140' fill='rgba(199,154,78,0.18)' />
+  <path d='M360 560 C430 440, 770 440, 840 560 L840 640 C760 690, 440 690, 360 640 Z' fill='rgba(243,238,231,0.12)' />
+  <path d='M430 520 C500 430, 700 430, 770 520' fill='none' stroke='url(#accent)' stroke-width='18' stroke-linecap='round' />
+  <text x='120' y='700' fill='#f3eee7' font-size='92' font-family='Segoe UI, Arial, sans-serif' font-weight='700'>Mullet Moderno</text>
+  <text x='120' y='760' fill='#d9cfbf' font-size='36' font-family='Segoe UI, Arial, sans-serif'>Estilo actualizado</text>
+</svg>

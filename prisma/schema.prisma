@@ -1,0 +1,170 @@
+// Comentario: Define tablas, relaciones y configuracion Prisma del proyecto.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Business {
+  id                 String              @id @default(cuid())
+  name               String
+  slug               String              @unique
+  owners             Owner[]
+  users              User[]
+  stamps             Stamp[]
+  haircuts           Haircut[]
+  products           Product[]
+  inventoryMovements InventoryMovement[]
+  haircutStyles      HaircutStyle[]
+  scanTokens         ScanToken[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@index([slug])
+}
+
+model Owner {
+  id                 String              @id @default(cuid())
+  email              String              @unique
+  password           String
+  name               String
+  role               String              @default("BARBER")
+  businessId         String
+  business           Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  haircuts           Haircut[]
+  inventoryMovements InventoryMovement[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@index([businessId])
+  @@index([role])
+}
+
+model User {
+  id             String      @id @default(cuid())
+  name           String
+  phone          String
+  stamps         Int         @default(0)
+  totalCuts      Int         @default(0)
+  businessId     String
+  business       Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  stampHistory   Stamp[]
+  haircutHistory Haircut[]
+  scanTokens     ScanToken[]
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@unique([phone, businessId])
+  @@index([businessId])
+}
+
+model Stamp {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  type       String // "PAID" | "FREE"
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([businessId])
+}
+
+model ScanToken {
+  id         String    @id @default(cuid())
+  token      String    @unique
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessId String
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([businessId, createdAt])
+  @@index([userId, businessId, usedAt, expiresAt])
+  @@index([expiresAt])
+}
+
+model Haircut {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessId    String
+  business      Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  barberId      String?
+  barber        Owner?   @relation(fields: [barberId], references: [id], onDelete: SetNull)
+  type          String // "PAID" | "FREE"
+  serviceName   String   @default("Corte de cabello")
+  priceCents    Int?
+  paymentMethod String? // "CASH" | "YAPE" | "PLIN" | "CARD"
+  createdAt     DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([businessId, createdAt])
+  @@index([barberId, createdAt])
+  @@index([businessId, paymentMethod])
+}
+
+model Product {
+  id                 String              @id @default(cuid())
+  businessId         String
+  business           Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name               String
+  description        String?
+  imageUrl           String?
+  priceCents         Int
+  stock              Int?
+  active             Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  inventoryMovements InventoryMovement[]
+
+  @@index([businessId, active])
+  @@index([businessId, createdAt])
+}
+
+model InventoryMovement {
+  id             String   @id @default(cuid())
+  businessId     String
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  type           String
+  reason         String?
+  quantity       Int
+  previousStock  Int
+  newStock       Int
+  unitPriceCents Int?
+  totalCents     Int?
+  userId         String?
+  user           Owner?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt      DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([productId, createdAt])
+  @@index([userId, createdAt])
+  @@map("inventory_movements")
+}
+
+model HaircutStyle {
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  imageUrl    String?
+  priceCents  Int?
+  durationMin Int?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([businessId, active])
+  @@index([businessId, createdAt])
+}
