@@ -185,9 +185,12 @@ export default function DigitalCardPage() {
           })
 
           if (!response.ok) {
+            const errorData = await response.json().catch(() => null) as { error?: string } | null
+            const apiError = errorData?.error?.trim()
+
             if (!cancelled) {
               setQrToken(null)
-              setQrError('No se pudo generar el QR. Reintentando...')
+              setQrError(apiError || 'No se pudo generar el QR. Reintentando...')
               scheduleRefresh()
             }
             return
