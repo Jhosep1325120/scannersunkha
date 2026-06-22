@@ -1,13 +1,13 @@
 import { PrismaClient } from '@prisma/client'
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 const prisma = new PrismaClient()
 
 const BUSINESS_SLUG = 'barberia-centro'
-const TEMPORARY_PASSWORD = '123456789'
 const TARGET_BARBER_COUNT = 6
+const AUTH_MANAGED_PASSWORD_MARKER = 'MANAGED_BY_SUPABASE_AUTH'
 const DEMO_SERVICE_PREFIX = 'Demo rendimiento semanal'
 
+// Crea primero estas cuentas manualmente en Supabase Authentication.
 const barberCandidates = [
   { name: 'Diego Ramírez Soto', email: 'diego.ramirez@sunkha.pe' },
   { name: 'Mateo Vargas León', email: 'mateo.vargas@sunkha.pe' },
@@ -33,6 +33,14 @@ type AuthUserRow = {
   confirmed: boolean
 }
 
+type DemoBarber = {
+  id: string
+  name: string
+  email: string
+  role: string
+  businessId: string
+}
+
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase()
 }
@@ -41,8 +49,7 @@ function getPreviousWeekRange() {
   const nowInLima = new Date(
     new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })
   )
-  const currentDay = nowInLima.getDay()
-  const daysSinceMonday = (currentDay + 6) % 7
+  const daysSinceMonday = (nowInLima.getDay() + 6) % 7
   const currentMonday = new Date(nowInLima)
 
   currentMonday.setDate(nowInLima.getDate() - daysSinceMonday)
@@ -70,12 +77,17 @@ function buildHaircutDate(
   const dayOffset = (barberIndex + cutIndex) % 6
 
   date.setDate(date.getDate() + dayOffset)
-  date.setHours(9 + ((barberIndex * 2 + cutIndex) % 10), (cutIndex * 10) % 60, 0, 0)
+  date.setHours(
+    9 + ((barberIndex * 2 + cutIndex) % 10),
+    (cutIndex * 10) % 60,
+    0,
+    0
+  )
 
   return date
 }
 
-async function getAuthUsers() {
+async function getConfirmedAuthUsers() {
   const rows = await prisma.$queryRawUnsafe<AuthUserRow[]>(
     `SELECT
        lower(email) AS email,
@@ -84,106 +96,14 @@ async function getAuthUsers() {
      WHERE email IS NOT NULL`
   )
 
-  return new Map(rows.map((row) => [normalizeEmail(row.email), row]))
-}
-
-async function passwordWorks(
-  supabase: SupabaseClient,
-  email: string
-) {
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password: TEMPORARY_PASSWORD,
-  })
-
-  if (data.session) {
-    await supabase.auth.signOut()
-  }
-
-  return !error && Boolean(data.user)
-}
-
-async function confirmDemoAuthEmail(email: string) {
-  const updatedRows = await prisma.$executeRaw`
-    UPDATE auth.users
-    SET
-      email_confirmed_at = COALESCE(email_confirmed_at, NOW()),
-      updated_at = NOW()
-    WHERE lower(email) = lower(${email})
-  `
-
-  if (updatedRows !== 1) {
-    throw new Error(`No se pudo confirmar la cuenta demo ${email} en Supabase Auth.`)
-  }
-}
-
-async function ensureAuthAccount(
-  supabase: SupabaseClient,
-  authUsers: Map<string, AuthUserRow>,
-  email: string
-) {
-  const normalizedEmail = normalizeEmail(email)
-  const existingAuthUser = authUsers.get(normalizedEmail)
-
-  if (existingAuthUser) {
-    if (!existingAuthUser.confirmed) {
-      await confirmDemoAuthEmail(normalizedEmail)
-      existingAuthUser.confirmed = true
-      console.log(`Auth confirmado para demo: ${normalizedEmail}`)
-    }
-
-    const hasDemoPassword = await passwordWorks(supabase, normalizedEmail)
-    if (!hasDemoPassword) {
-      throw new Error(
-        `${normalizedEmail} ya existe en Supabase Auth, pero no usa la contraseña temporal solicitada.`
-      )
-    }
-
-    console.log(`Auth reutilizado: ${normalizedEmail}`)
-    return
-  }
-
-  const { data, error } = await supabase.auth.signUp({
-    email: normalizedEmail,
-    password: TEMPORARY_PASSWORD,
-  })
-
-  if (error) {
-    throw new Error(`No se pudo crear ${normalizedEmail} en Supabase Auth: ${error.message}`)
-  }
-
-  if (!data.user) {
-    throw new Error(`Supabase no devolvió el usuario creado para ${normalizedEmail}.`)
-  }
-
-  if (!data.session) {
-    await confirmDemoAuthEmail(normalizedEmail)
-    const hasDemoPassword = await passwordWorks(supabase, normalizedEmail)
-    if (!hasDemoPassword) {
-      throw new Error(`La cuenta demo ${normalizedEmail} fue confirmada, pero no pudo iniciar sesión.`)
-    }
-  }
-
-  await supabase.auth.signOut()
-  authUsers.set(normalizedEmail, { email: normalizedEmail, confirmed: true })
-  console.log(`Auth creado: ${normalizedEmail}`)
+  return new Map(
+    rows
+      .filter((row) => row.confirmed)
+      .map((row) => [normalizeEmail(row.email), row])
+  )
 }
 
 async function main() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error('Faltan las variables públicas de Supabase requeridas por el proyecto.')
-  }
-
-  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  })
-
   const business = await prisma.business.findUnique({
     where: { slug: BUSINESS_SLUG },
     select: {
@@ -207,29 +127,26 @@ async function main() {
     throw new Error(`No existe el negocio ${BUSINESS_SLUG}.`)
   }
 
-  const authUsers = await getAuthUsers()
-  const selectedBarbers = [...business.owners]
+  const confirmedAuthUsers = await getConfirmedAuthUsers()
+  const selectedBarbers: DemoBarber[] = business.owners.filter((owner) =>
+    confirmedAuthUsers.has(normalizeEmail(owner.email))
+  )
+  const selectedEmails = new Set(
+    selectedBarbers.map((owner) => normalizeEmail(owner.email))
+  )
 
   console.log(`Negocio: ${business.name} (${BUSINESS_SLUG})`)
-  console.log(`Barberos existentes en Owner: ${selectedBarbers.length}`)
-
-  for (const owner of selectedBarbers.slice(0, TARGET_BARBER_COUNT)) {
-    await ensureAuthAccount(supabase, authUsers, owner.email)
-
-    await prisma.owner.update({
-      where: { id: owner.id },
-      data: {
-        role: 'BARBER',
-        businessId: business.id,
-        password: TEMPORARY_PASSWORD,
-      },
-    })
-  }
+  console.log(`Barberos existentes en Owner: ${business.owners.length}`)
+  console.log(`Barberos reutilizados con Auth confirmado: ${selectedBarbers.length}`)
 
   for (const candidate of barberCandidates) {
     if (selectedBarbers.length >= TARGET_BARBER_COUNT) break
 
     const email = normalizeEmail(candidate.email)
+    if (selectedEmails.has(email) || !confirmedAuthUsers.has(email)) {
+      continue
+    }
+
     const ownerByEmail = await prisma.owner.findUnique({
       where: { email },
       select: {
@@ -241,55 +158,59 @@ async function main() {
       },
     })
 
-    if (ownerByEmail) {
-      if (ownerByEmail.businessId !== business.id) {
-        throw new Error(`${email} ya pertenece a otro negocio.`)
-      }
-
-      await ensureAuthAccount(supabase, authUsers, email)
-      const reusedOwner = await prisma.owner.update({
-        where: { id: ownerByEmail.id },
-        data: {
-          role: 'BARBER',
-          password: TEMPORARY_PASSWORD,
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          businessId: true,
-        },
-      })
-      selectedBarbers.push(reusedOwner)
-      console.log(`Owner reutilizado: ${email}`)
-      continue
+    if (ownerByEmail && ownerByEmail.businessId !== business.id) {
+      throw new Error(`${email} ya pertenece a otro negocio.`)
     }
 
-    await ensureAuthAccount(supabase, authUsers, email)
-    const createdOwner = await prisma.owner.create({
-      data: {
-        name: candidate.name,
-        email,
-        password: TEMPORARY_PASSWORD,
-        role: 'BARBER',
-        businessId: business.id,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        businessId: true,
-      },
-    })
+    const owner = ownerByEmail
+      ? await prisma.owner.update({
+          where: { id: ownerByEmail.id },
+          data: { role: 'BARBER' },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            businessId: true,
+          },
+        })
+      : await prisma.owner.create({
+          data: {
+            name: candidate.name,
+            email,
+            password: AUTH_MANAGED_PASSWORD_MARKER,
+            role: 'BARBER',
+            businessId: business.id,
+          },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            businessId: true,
+          },
+        })
 
-    selectedBarbers.push(createdOwner)
-    console.log(`Owner creado: ${email}`)
+    selectedBarbers.push(owner)
+    selectedEmails.add(email)
+    console.log(`${ownerByEmail ? 'Owner reutilizado' : 'Owner creado'}: ${email}`)
   }
 
   if (selectedBarbers.length < TARGET_BARBER_COUNT) {
-    throw new Error(`Solo se pudieron preparar ${selectedBarbers.length} barberos.`)
+    const missingCount = TARGET_BARBER_COUNT - selectedBarbers.length
+    const missingEmails = barberCandidates
+      .map((candidate) => normalizeEmail(candidate.email))
+      .filter(
+        (email) =>
+          !selectedEmails.has(email) && !confirmedAuthUsers.has(email)
+      )
+      .slice(0, missingCount)
+
+    throw new Error(
+      `Solo hay ${selectedBarbers.length} barberos preparados. ` +
+      `Crea y confirma manualmente en Supabase Authentication estas ${missingCount} cuentas: ` +
+      missingEmails.join(', ')
+    )
   }
 
   const demoBarbers = selectedBarbers.slice(0, TARGET_BARBER_COUNT)
@@ -300,7 +221,9 @@ async function main() {
   })
 
   if (clients.length === 0) {
-    throw new Error('No hay clientes disponibles para asociar los cortes de demostración.')
+    throw new Error(
+      'No hay clientes disponibles para asociar los cortes de demostración.'
+    )
   }
 
   const week = getPreviousWeekRange()
@@ -327,7 +250,8 @@ async function main() {
         type: 'PAID',
         serviceName,
         priceCents: profile.priceCents,
-        paymentMethod: paymentMethods[(barberIndex + cutIndex) % paymentMethods.length],
+        paymentMethod:
+          paymentMethods[(barberIndex + cutIndex) % paymentMethods.length],
         createdAt: buildHaircutDate(week.start, barberIndex, cutIndex),
       }))
     })
@@ -345,11 +269,11 @@ async function main() {
   demoBarbers.forEach((barber, index) => {
     const profile = performanceProfiles[index]
     const incomeCents = profile.cuts * profile.priceCents
+
     console.log(
       `- ${barber.name}: ${profile.cuts} cortes, S/ ${(incomeCents / 100).toFixed(2)}`
     )
   })
-  console.log(`Contraseña temporal demo: ${TEMPORARY_PASSWORD}`)
 }
 
 main()
